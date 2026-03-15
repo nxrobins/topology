@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TOPOLOGY — Agent Team Evolution</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0A0A0F; color:#ccc; font-family:'Inter',sans-serif; overflow:hidden; }
+  canvas#main { position:absolute; top:0; left:0; }
+
+  /* ── Sidebar ── */
+  #sidebar { position:absolute; right:0; top:0; bottom:80px; width:300px; z-index:10;
+    display:flex; flex-direction:column; gap:0; overflow-y:auto; scrollbar-width:thin;
+    scrollbar-color:#333 transparent; background:rgba(10,10,15,0.92);
+    border-left:1px solid #222; }
+  #sidebar::-webkit-scrollbar { width:4px; }
+  #sidebar::-webkit-scrollbar-thumb { background:#333; border-radius:2px; }
+  .panel { border-bottom:1px solid #222; padding:0; }
+  .panel-header { padding:12px 16px; cursor:pointer; display:flex; justify-content:space-between;
+    align-items:center; user-select:none; }
+  .panel-header:hover { background:rgba(255,255,255,0.03); }
+  .panel-header h3 { margin:0; color:#fff; font-size:11px; letter-spacing:1px; font-weight:600;
+    text-transform:uppercase; }
+  .panel-toggle { color:#666; font-size:10px; transition:transform 0.2s; }
+  .panel-toggle.collapsed { transform:rotate(-90deg); }
+  .panel-body { padding:0 16px 12px; }
+  .panel-body.collapsed { display:none; }
+
+  /* ── Genome Stats ── */
+  #genome-stats { font-family:'JetBrains Mono',monospace; font-size:13px; line-height:1.6; }
+  #genome-stats div { display:flex; justify-content:space-between; }
+  #genome-stats .gene-label { color:#888; font-size:11px; letter-spacing:1px; text-transform:uppercase; }
+  #genome-stats .gene-value { color:#00FFCC; }
+  #stat-roles-row { display:block !important; margin-top:6px; }
+  #stat-roles-row .gene-label { display:block; margin-bottom:2px; }
+  #stat-roles { color:#00FFCC; font-size:12px; }
+
+  /* ── Scores Panel ── */
+  #scores-panel { font-family:'JetBrains Mono',monospace; font-size:12px; line-height:1.8; }
+  .score-row { display:flex; align-items:center; gap:8px; }
+  .score-id { width:28px; color:#888; }
+  .score-val { width:36px; text-align:right; }
+  .score-bar { flex:1; height:6px; background:#111; border-radius:3px; overflow:hidden; }
+  .score-bar-fill { height:100%; border-radius:3px; transition:width 0.4s ease; }
+  .score-dead { color:#444; }
+  .score-dead .score-bar-fill { background:#444 !important; }
+
+  /* ── Action Feed ── */
+  #feed-container { position:absolute; bottom:80px; left:0; right:0; height:150px;
+    z-index:10; background:rgba(10,10,15,0.88); border-top:1px solid #222; }
+  #feed-header { padding:8px 16px; font-size:11px; letter-spacing:1px; font-weight:600;
+    color:#fff; text-transform:uppercase; cursor:pointer; user-select:none;
+    display:flex; justify-content:space-between; align-items:center; }
+  #feed-header:hover { background:rgba(255,255,255,0.03); }
+  #feed-toggle { color:#666; font-size:10px; transition:transform 0.2s; }
+  #feed-toggle.collapsed { transform:rotate(-90deg); }
+  #action-feed { max-height:115px; overflow-y:auto; padding:0 16px 8px;
+    font-family:'JetBrains Mono',monospace; font-size:12px; line-height:1.5; scrollbar-width:thin;
+    scrollbar-color:#333 transparent; }
+  #action-feed::-webkit-scrollbar { width:3px; }
+  #action-feed::-webkit-scrollbar-thumb { background:#333; }
+  #action-feed div { padding:1px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #action-feed.collapsed { display:none; }
+
+  /* ── Synthesis Overlay ── */
+  #synthesis-overlay { display:none; position:fixed; top:50%; left:50%;
+    transform:translate(-50%,-50%); width:60%; max-width:700px; max-height:60vh;
+    overflow-y:auto; background:rgba(10,10,15,0.95); border:1px solid #00FFCC;
+    padding:30px; color:#fff; font-family:'Inter',sans-serif; font-size:14px;
+    line-height:1.8; z-index:1000; box-shadow:0 0 40px rgba(0,255,204,0.15);
+    border-radius:4px; transition:opacity 0.6s ease-in; }
+  #synthesis-overlay h2 { margin:0 0 15px 0; color:#FFD700; font-size:16px;
+    letter-spacing:1px; font-weight:600; }
+  #synthesis-overlay .synth-close { position:absolute; top:12px; right:16px;
+    color:#666; cursor:pointer; font-size:18px; }
+  #synthesis-overlay .synth-close:hover { color:#fff; }
+  #synthesis-text { white-space:pre-wrap; }
+
+  /* ── Start Bar ── */
+  #start-bar { position:absolute; bottom:0; left:0; right:0; height:80px; z-index:9;
+    display:flex; gap:10px; align-items:center; justify-content:center;
+    background:rgba(10,10,15,0.95); border-top:1px solid #222; padding:0 20px; }
+  #task-input { width:500px; padding:12px 16px; background:#111; border:1px solid #333;
+    color:#fff; font-family:'Inter',sans-serif; font-size:14px; border-radius:4px; outline:none; }
+  #task-input:focus { border-color:#00FFCC; }
+  #start-btn { padding:12px 24px; background:#00FFCC; color:#0A0A0F; border:none; font-weight:700;
+    font-family:'Inter',sans-serif; font-size:14px; cursor:pointer; border-radius:4px;
+    letter-spacing:1px; }
+  #start-btn:hover { background:#00e6b8; }
+  #start-btn:disabled { background:#333; color:#666; cursor:not-allowed; }
+
+  /* ── Wordmark & Status ── */
+  #status-bar { position:absolute; top:20px; left:20px; z-index:10; }
+  #status-bar h1 { font-size:18px; color:#fff; letter-spacing:3px; font-weight:500; margin-bottom:4px; }
+  #status-bar p { font-size:11px; color:#666; font-family:'JetBrains Mono',monospace; }
+  #connection-dot { display:inline-block; width:8px; height:8px; border-radius:50%;
+    background:#f44; margin-right:6px; vertical-align:middle; }
+
+  /* ── Gen Counter ── */
+  #gen-display { position:absolute; top:20px; right:320px; z-index:10;
+    font-family:'JetBrains Mono',monospace; font-size:13px; color:#FFD700; letter-spacing:1px; }
+
+  /* ── Demo Indicator ── */
+  #demo-indicator { display:none; position:absolute; bottom:90px; right:10px; z-index:20;
+    font-size:10px; color:#444; font-family:'JetBrains Mono',monospace; }
+
+  canvas#fitness-graph { width:100%; height:100px; display:block; margin-top:8px; }
+</style>
+</head>
+<body>
+
+<canvas id="main"></canvas>
+
+<div id="status-bar">
+  <h1>TOPOLOGY</h1>
+  <p><span id="connection-dot"></span><span id="status-text">Connecting...</span></p>
+</div>
+
+<div id="gen-display">GENERATION: <span id="gen-count">0</span>/5</div>
+
+<div id="sidebar">
+  <div class="panel" data-panel="fitness">
+    <div class="panel-header" onclick="togglePanel(this)">
+      <h3>FITNESS</h3>
+      <span class="panel-toggle">&#9660;</span>
+    </div>
+    <div class="panel-body">
+      <div style="display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:4px;">
+        <span style="color:#888;">BEST: <span style="color:#FFD700;" id="best-fitness">0.00</span></span>
+        <span style="color:#888;">AVG: <span style="color:#00FFCC;" id="avg-fitness">0.00</span></span>
+      </div>
+      <canvas id="fitness-graph" width="268" height="100"></canvas>
+    </div>
+  </div>
+  <div class="panel" data-panel="scores">
+    <div class="panel-header" onclick="togglePanel(this)">
+      <h3>SCORES</h3>
+      <span class="panel-toggle">&#9660;</span>
+    </div>
+    <div class="panel-body">
+      <div id="scores-panel"></div>
+    </div>
+  </div>
+  <div class="panel" data-panel="genome">
+    <div class="panel-header" onclick="togglePanel(this)">
+      <h3>BEST ARCHITECTURE</h3>
+      <span class="panel-toggle">&#9660;</span>
+    </div>
+    <div class="panel-body">
+      <div id="genome-stats">
+        <div><span class="gene-label">HIERARCHY</span><span class="gene-value" id="stat-hierarchy">--</span></div>
+        <div><span class="gene-label">COMMS</span><span class="gene-value" id="stat-comms">--</span></div>
+        <div><span class="gene-label">DECISIONS</span><span class="gene-value" id="stat-decisions">--</span></div>
+        <div><span class="gene-label">DISTRIBUTE</span><span class="gene-value" id="stat-dist">--</span></div>
+        <div><span class="gene-label">TEAM SIZE</span><span class="gene-value" id="stat-size">--</span></div>
+        <div id="stat-roles-row"><span class="gene-label">ROLES</span><span id="stat-roles">--</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="feed-container">
+  <div id="feed-header" onclick="toggleFeed()">
+    <span>ACTION FEED</span>
+    <span id="feed-toggle">&#9660;</span>
+  </div>
+  <div id="action-feed"></div>
+</div>
+
+<div id="synthesis-overlay">
+  <span class="synth-close" onclick="document.getElementById('synthesis-overlay').style.display='none'">&times;</span>
+  <h2>EVOLUTIONARY SYNTHESIS</h2>
+  <div id="synthesis-text"></div>
+</div>
+
+<div id="start-bar">
+  <input id="task-input" placeholder="Enter a task for agents to compete on..." value="Build an AI tutoring app for high schoolers">
+  <button id="start-btn">EVOLVE</button>
+</div>
+
+<div id="demo-indicator">&#9673; RECORDED</div>
+
+<script>
+// ─── Collapsible Panels ────────────────────────────────────────────────────
+function togglePanel(header) {
+  const body = header.nextElementSibling;
+  const toggle = header.querySelector('.panel-toggle');
+  body.classList.toggle('collapsed');
+  toggle.classList.toggle('collapsed');
+}
+function toggleFeed() {
+  const feed = document.getElementById('action-feed');
+  const toggle = document.getElementById('feed-toggle');
+  feed.classList.toggle('collapsed');
+  toggle.classList.toggle('collapsed');
+}
+
+// ─── Constants ─────────────────────────────────────────────────────────────
+const CYAN = '#00FFCC';
+const MAGENTA = '#FF007F';
+const GOLD = '#FFD700';
+const DEAD = '#444444';
+const DANGER = '#FF4444';
+const RADIUS = 50;
+const NODE_R = 8;
+
+// ─── State ─────────────────────────────────────────────────────────────────
+let state = {
+  teams: [],
+  sonarPings: [],
+  particles: [],
+  fitnessHistory: [],
+  generation: 0,
+  running: false,
+  bestTeamId: null,
+};
+
+let ws = null;
+let wsConnected = false;
+let DEMO_DATA = [];
+
+// ─── Canvas Setup ──────────────────────────────────────────────────────────
+const canvas = document.getElementById('main');
+const ctx = canvas.getContext('2d');
+const fgCanvas = document.getElementById('fitness-graph');
+const fgCtx = fgCanvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── Node Color: Roles, Not Teams ──────────────────────────────────────────
+function getNodeColor(agent, agentIdx, team) {
+  if (!team.alive) return DEAD;
+  if (agentIdx === 0 && team.genome.hierarchy !== 'flat') return MAGENTA;
+  return CYAN;
+}
+
+// ─── Team Layout: 5×2 Grid ────────────────────────────────────────────────
+function layoutTeams(teams) {
+  const canvasW = canvas.width - 300;
+  const canvasH = canvas.height - 230; // room for feed + synthesis + start bar
+  const cols = 5;
+  const rows = 2;
+  const cellW = canvasW / cols;
+  const cellH = canvasH / rows;
+
+  teams.forEach((team, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    team.targetX = col * cellW + cellW / 2;
+    team.targetY = 60 + row * cellH + cellH / 2;
+    if (team.x === undefined) {
+      team.x = team.targetX;
+      team.y = team.targetY;
+    }
+  });
+}
+
+// ─── Agent Positions: Hierarchy-Specific ───────────────────────────────────
+function getAgentPositions(team) {
+  const { genome, agents, x, y } = team;
+  const scale = team.alive ? 1 : getDeathScale(team);
+  const r = RADIUS * scale;
+  return agents.map((agent, i) => {
+    if (genome.hierarchy === 'hub-spoke') {
+      if (i === 0) return { ax: x, ay: y };
+      const angle = ((i - 1) / (agents.length - 1)) * Math.PI * 2;
+      return { ax: x + r * Math.cos(angle), ay: y + r * Math.sin(angle) };
+    }
+    if (genome.hierarchy === 'hierarchical') {
+      if (i === 0) return { ax: x, ay: y - r * 0.8 };
+      const spacing = (r * 2) / Math.max(agents.length - 2, 1);
+      return { ax: (x - r) + (i - 1) * spacing, ay: y + r * 0.5 };
+    }
+    if (genome.hierarchy === 'pair-based') {
+      const pairIdx = Math.floor(i / 2);
+      const inPair = i % 2;
+      const pairAngle = (pairIdx / Math.ceil(agents.length / 2)) * Math.PI * 2;
+      const px = x + r * Math.cos(pairAngle);
+      const py = y + r * Math.sin(pairAngle);
+      const offset = inPair === 0 ? -8 : 8;
+      return { ax: px + offset, ay: py + offset };
+    }
+    // Flat: circle
+    const angle = (i / agents.length) * Math.PI * 2;
+    return { ax: x + r * Math.cos(angle), ay: y + r * Math.sin(angle) };
+  });
+}
+
+// ─── Death Scale ───────────────────────────────────────────────────────────
+function getDeathScale(team) {
+  if (team.alive) return 1.0;
+  const elapsed = Date.now() - (team.deathTime || Date.now());
+  return Math.max(0.3, 1.0 - elapsed / 500);
+}
+
+// ─── Connection Lines ──────────────────────────────────────────────────────
+function drawConnections(team, positions) {
+  const comm = team.genome.communication;
+  ctx.strokeStyle = team.alive ? 'rgba(255,255,255,0.25)' : 'rgba(68,68,68,0.06)';
+  ctx.lineWidth = 1.5;
+
+  function line(a, b) {
+    ctx.beginPath();
+    ctx.moveTo(a.ax, a.ay);
+    ctx.lineTo(b.ax, b.ay);
+    ctx.stroke();
+  }
+
+  if (comm === 'broadcast') {
+    for (let i = 0; i < positions.length; i++)
+      for (let j = i + 1; j < positions.length; j++)
+        line(positions[i], positions[j]);
+  } else if (comm === 'chain') {
+    for (let i = 0; i < positions.length - 1; i++)
+      line(positions[i], positions[i + 1]);
+  } else if (comm === 'hub') {
+    for (let i = 1; i < positions.length; i++)
+      line(positions[0], positions[i]);
+  } else { // free-form — stable pseudo-random (no Math.random, prevents 60fps flicker)
+    for (let i = 0; i < positions.length; i++) {
+      const j = (i + 2) % positions.length;
+      line(positions[i], positions[j]);
+    }
+  }
+}
+
+// ─── Draw Agent Node ───────────────────────────────────────────────────────
+function drawAgent(agentData, agentIdx, team, pos) {
+  const { ax, ay } = pos;
+  const color = getNodeColor(agentData, agentIdx, team);
+  const scale = team.alive ? 1 : getDeathScale(team);
+  const size = team.alive ? NODE_R + (team.fitness || 0) * 4 : NODE_R * 0.5 * scale;
+  const isBest = team.id === state.bestTeamId && team.alive;
+
+  // Gold glow for winning team — visible from stage distance
+  if (isBest) {
+    ctx.save();
+    ctx.shadowColor = GOLD;
+    ctx.shadowBlur = 25;
+  }
+
+  ctx.beginPath();
+  ctx.arc(ax, ay, size, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = team.alive ? 0.9 : 0.15;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  if (isBest) ctx.restore();
+
+  // Subtle outer ring for alive agents
+  if (team.alive) {
+    ctx.beginPath();
+    ctx.arc(ax, ay, size + 2, 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.25;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // Role label — truncated, positioned outward from team center
+  const rawLabel = agentData.role || '';
+  if (rawLabel && team.alive) {
+    const label = rawLabel.length > 8 ? rawLabel.substring(0, 7) + '…' : rawLabel;
+    ctx.fillStyle = '#777';
+    ctx.font = "8px 'JetBrains Mono', monospace";
+    const dx = ax - team.x;
+    const dy = ay - team.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const pad = size + 5;
+    if (dist < 2) {
+      ctx.textAlign = 'center';
+      ctx.fillText(label, ax, ay + size + 12);
+    } else {
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const lx = ax + nx * pad;
+      const ly = ay + ny * pad + 3;
+      if (nx > 0.3) ctx.textAlign = 'left';
+      else if (nx < -0.3) ctx.textAlign = 'right';
+      else ctx.textAlign = 'center';
+      ctx.fillText(label, lx, ly);
+    }
+  }
+}
+
+// ─── Draw Full Team ────────────────────────────────────────────────────────
+function drawTeam(team) {
+  const positions = getAgentPositions(team);
+
+  // Connections
+  drawConnections(team, positions);
+
+  // Agents
+  team.agents.forEach((agent, i) => {
+    drawAgent(agent, i, team, positions[i]);
+  });
+
+  // Team label below — big enough to read from 10 feet
+  ctx.textAlign = 'center';
+  ctx.fillStyle = team.alive ? '#aaa' : '#333';
+  ctx.font = "bold 13px 'JetBrains Mono', monospace";
+  ctx.fillText(`T${team.id}`, team.x, team.y + RADIUS + 20);
+  if (team.fitness > 0) {
+    ctx.fillStyle = team.id === state.bestTeamId ? GOLD : (team.alive ? '#888' : '#333');
+    ctx.font = "12px 'JetBrains Mono', monospace";
+    ctx.fillText(team.fitness.toFixed(2), team.x, team.y + RADIUS + 34);
+  }
+
+  // Hierarchy label above
+  ctx.fillStyle = team.alive ? '#666' : '#222';
+  ctx.font = "10px 'JetBrains Mono', monospace";
+  ctx.fillText(team.genome.hierarchy, team.x, team.y - RADIUS - 10);
+}
+
+// ─── Sonar Pings ───────────────────────────────────────────────────────────
+function drawSonarPings() {
+  state.sonarPings = state.sonarPings.filter(p => p.opacity > 0.01);
+  state.sonarPings.forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+    ctx.strokeStyle = p.color;
+    ctx.globalAlpha = p.opacity;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    p.radius += 1.5;
+    p.opacity -= 0.03;
+  });
+}
+
+// ─── Particles ─────────────────────────────────────────────────────────────
+function drawParticles() {
+  state.particles = state.particles.filter(p => p.progress < 1);
+  state.particles.forEach(p => {
+    p.progress += 0.02;
+    const cx = p.x + (p.tx - p.x) * p.progress;
+    const cy = p.y + (p.ty - p.y) * p.progress;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = 1 - p.progress;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+}
+
+// ─── Fitness Sparkline ─────────────────────────────────────────────────────
+function drawFitnessGraph() {
+  const w = fgCanvas.width;
+  const h = fgCanvas.height;
+  fgCtx.clearRect(0, 0, w, h);
+
+  if (state.fitnessHistory.length < 1) return;
+
+  // Grid lines
+  fgCtx.strokeStyle = '#1a1a1a';
+  fgCtx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = (i / 4) * h;
+    fgCtx.beginPath(); fgCtx.moveTo(0, y); fgCtx.lineTo(w, y); fgCtx.stroke();
+  }
+
+  const data = state.fitnessHistory;
+  const xStep = w / Math.max(data.length - 1, 1);
+
+  // Avg line (cyan, semi-transparent — the population)
+  fgCtx.beginPath();
+  fgCtx.strokeStyle = 'rgba(0,255,204,0.5)';
+  fgCtx.lineWidth = 2;
+  fgCtx.lineJoin = 'round';
+  data.forEach((d, i) => {
+    const x = i * xStep;
+    const y = h - d.avg * h;
+    i === 0 ? fgCtx.moveTo(x, y) : fgCtx.lineTo(x, y);
+  });
+  fgCtx.stroke();
+
+  // Best line (gold — the apex genome)
+  fgCtx.beginPath();
+  fgCtx.strokeStyle = GOLD;
+  fgCtx.lineWidth = 2;
+  fgCtx.lineJoin = 'round';
+  data.forEach((d, i) => {
+    const x = i * xStep;
+    const y = h - d.best * h;
+    i === 0 ? fgCtx.moveTo(x, y) : fgCtx.lineTo(x, y);
+  });
+  fgCtx.stroke();
+
+  // Gen labels
+  fgCtx.fillStyle = '#555';
+  fgCtx.font = "9px 'JetBrains Mono', monospace";
+  fgCtx.textAlign = 'center';
+  data.forEach((d, i) => {
+    fgCtx.fillText(d.gen, i * xStep, h - 2);
+  });
+}
+
+// ─── Scores Panel ──────────────────────────────────────────────────────────
+function updateScoresPanel() {
+  // Alive teams sorted by fitness, then dead teams collapsed
+  const alive = state.teams.filter(t => t.alive).sort((a, b) => (b.fitness || 0) - (a.fitness || 0));
+  const dead = state.teams.filter(t => !t.alive).sort((a, b) => (b.fitness || 0) - (a.fitness || 0));
+  const panel = document.getElementById('scores-panel');
+
+  let html = alive.map(t => {
+    const pct = Math.round((t.fitness || 0) * 100);
+    const barColor = t.id === state.bestTeamId ? GOLD : CYAN;
+    return `<div class="score-row">
+      <span class="score-id">#${t.id}</span>
+      <span class="score-val" style="color:${barColor}">${(t.fitness || 0).toFixed(2)}</span>
+      <div class="score-bar"><div class="score-bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+    </div>`;
+  }).join('');
+
+  if (dead.length > 0) {
+    html += `<div style="color:#333;font-size:10px;margin-top:4px;border-top:1px solid #1a1a1a;padding-top:4px;">`;
+    html += dead.map(t => `<span style="color:#444;margin-right:8px;">#${t.id} ✗</span>`).join('');
+    html += `</div>`;
+  }
+
+  panel.innerHTML = html;
+}
+
+// ─── Render Loop ───────────────────────────────────────────────────────────
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Lerp team positions (including mutation bloom)
+  state.teams.forEach(t => {
+    if (t.bloomStart) {
+      const elapsed = Date.now() - t.bloomStart;
+      const p = Math.min(1, elapsed / 600);
+      const ease = p * (2 - p); // ease-out
+      t.x = t.bloomFromX + (t.targetX - t.bloomFromX) * ease;
+      t.y = t.bloomFromY + (t.targetY - t.bloomFromY) * ease;
+      if (p >= 1) t.bloomStart = null;
+    } else if (t.targetX !== undefined) {
+      t.x += (t.targetX - t.x) * 0.08;
+      t.y += (t.targetY - t.y) * 0.08;
+    }
+  });
+
+  state.teams.forEach(drawTeam);
+  drawSonarPings();
+  drawParticles();
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+// ─── Action Feed ─────────────────────────────────────────────────────────
+function addFeed(text, color = '#888') {
+  const feed = document.getElementById('action-feed');
+  const line = document.createElement('div');
+  line.style.color = color;
+  line.textContent = `> ${text}`;
+  feed.appendChild(line);
+  while (feed.children.length > 20) feed.removeChild(feed.firstChild);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+// ─── Message Handler ────────────────────────────────────────────────────────
+function handleMessage(msg) {
+  switch (msg.type) {
+    case 'generation_start': {
+      state.generation = msg.gen;
+      document.getElementById('gen-count').textContent = msg.gen;
+      addFeed(`Generation ${msg.gen} — ${msg.teams.length} teams`, '#FFD700');
+
+      state.teams = msg.teams.map((t) => {
+        const existing = state.teams.find(st => st.id === t.id);
+        return {
+          ...t,
+          alive: true,
+          fitness: t.fitness || 0,
+          x: existing ? existing.x : undefined,
+          y: existing ? existing.y : undefined,
+          targetX: undefined,
+          targetY: undefined,
+          deathTime: null,
+          bloomStart: null,
+        };
+      });
+      layoutTeams(state.teams);
+      updateScoresPanel();
+      break;
+    }
+
+    case 'agent_thinking': {
+      const team = state.teams.find(t => t.id === msg.team_id);
+      if (!team) break;
+      const positions = getAgentPositions(team);
+      const agentIdx = team.agents.findIndex(a => a.id === msg.agent_id);
+      if (agentIdx >= 0 && positions[agentIdx]) {
+        const color = getNodeColor(team.agents[agentIdx], agentIdx, team);
+        state.sonarPings.push({
+          x: positions[agentIdx].ax,
+          y: positions[agentIdx].ay,
+          radius: NODE_R,
+          opacity: 0.8,
+          color: color,
+        });
+      }
+      addFeed(`T${msg.team_id} ${msg.role || msg.agent_id} thinking...`, '#888');
+      break;
+    }
+
+    case 'agent_output': {
+      const team = state.teams.find(t => t.id === msg.team_id);
+      if (!team) break;
+      const positions = getAgentPositions(team);
+      const agentIdx = team.agents.findIndex(a => a.id === msg.agent_id);
+      if (agentIdx >= 0 && positions[agentIdx]) {
+        const color = getNodeColor(team.agents[agentIdx], agentIdx, team);
+        state.particles.push({
+          x: positions[agentIdx].ax, y: positions[agentIdx].ay,
+          tx: team.x, ty: team.y,
+          progress: 0, color: color,
+        });
+      }
+      addFeed(`T${msg.team_id} ${msg.role || msg.agent_id} output`, CYAN);
+      break;
+    }
+
+    case 'team_sync': break;
+
+    case 'generation_insight': {
+      const feed = document.getElementById('action-feed');
+      const entry = document.createElement('div');
+      entry.style.cssText = 'color:#FFD700; padding:4px 0; border-bottom:1px solid #333; font-size:12px; white-space:normal;';
+      entry.innerHTML = `<strong>GEN ${msg.gen}:</strong> ${msg.text}`;
+      feed.appendChild(entry);
+      feed.scrollTop = feed.scrollHeight;
+      break;
+    }
+
+    case 'team_scored': {
+      const team = state.teams.find(t => t.id === msg.team_id);
+      if (team) team.fitness = msg.fitness;
+      // Update best team on every score so glow appears immediately
+      const currentBest = state.teams.filter(t => t.alive).reduce((a, b) => (b.fitness || 0) > (a.fitness || 0) ? b : a, { fitness: 0 });
+      if (currentBest.id !== undefined) state.bestTeamId = currentBest.id;
+      const r = msg.reasoning ? ` — ${msg.reasoning.substring(0, 80)}` : '';
+      addFeed(`T${msg.team_id} scored ${msg.fitness}${r}`, GOLD);
+      updateScoresPanel();
+      break;
+    }
+
+    case 'selection': {
+      msg.dissolved.forEach(id => {
+        const team = state.teams.find(t => t.id === id);
+        if (team) {
+          team.alive = false;
+          team.deathTime = Date.now();
+        }
+      });
+      addFeed(`Survived: [${msg.survived.join(', ')}]`, CYAN);
+      addFeed(`Dissolved: [${msg.dissolved.join(', ')}]`, DANGER);
+      updateScoresPanel();
+      break;
+    }
+
+    case 'mutation': {
+      // Mutation bloom: child starts at parent position
+      const parent = state.teams.find(t => t.id === msg.parent_id);
+      const child = state.teams.find(t => t.id === msg.child_id);
+      if (parent && child) {
+        child.bloomFromX = parent.x;
+        child.bloomFromY = parent.y;
+        child.x = parent.x;
+        child.y = parent.y;
+        child.bloomStart = Date.now();
+      }
+      addFeed(`T${msg.parent_id ?? '?'} → T${msg.child_id}: ${msg.mutation_desc}`, MAGENTA);
+      break;
+    }
+
+    case 'generation_end': {
+      state.fitnessHistory.push({ gen: msg.gen, avg: msg.avg_fitness, best: msg.best_fitness });
+      document.getElementById('avg-fitness').textContent = msg.avg_fitness.toFixed(2);
+      document.getElementById('best-fitness').textContent = msg.best_fitness.toFixed(2);
+      drawFitnessGraph();
+
+      // Find best alive team
+      const best = [...state.teams].filter(t => t.alive).sort((a, b) => b.fitness - a.fitness)[0];
+      if (best) {
+        state.bestTeamId = best.id;
+        document.getElementById('stat-hierarchy').textContent = best.genome.hierarchy.toUpperCase();
+        document.getElementById('stat-comms').textContent = best.genome.communication.toUpperCase();
+        document.getElementById('stat-decisions').textContent = best.genome.decision_making.toUpperCase();
+        document.getElementById('stat-dist').textContent = best.genome.work_distribution.toUpperCase();
+        document.getElementById('stat-size').textContent = best.agents.length;
+        document.getElementById('stat-roles').textContent = best.genome.roles.join(', ');
+      }
+      updateScoresPanel();
+      break;
+    }
+
+    case 'synthesis': {
+      const overlay = document.getElementById('synthesis-overlay');
+      overlay.style.opacity = 0;
+      overlay.style.display = 'block';
+      document.getElementById('synthesis-text').textContent = msg.text;
+      requestAnimationFrame(() => { overlay.style.opacity = 1; });
+      addFeed('Synthesis complete.', '#fff');
+      break;
+    }
+
+    case 'complete': {
+      addFeed(`EVOLUTION COMPLETE — Winner: T${msg.winner.id} (${msg.winner.fitness})`, GOLD);
+      document.getElementById('start-btn').disabled = false;
+      document.getElementById('start-btn').textContent = 'EVOLVE AGAIN';
+      state.running = false;
+      // Show start bar if synthesis isn't showing
+      document.getElementById('start-bar').style.display = 'flex';
+      break;
+    }
+
+    case 'fallback_warning':
+      addFeed(`WARNING: ${msg.elapsed}s elapsed — press D for demo mode`, DANGER);
+      break;
+  }
+}
+
+// ─── WebSocket ──────────────────────────────────────────────────────────────
+function connect() {
+  ws = new WebSocket('ws://localhost:8765');
+  ws.onopen = () => {
+    wsConnected = true;
+    document.getElementById('connection-dot').style.background = CYAN;
+    document.getElementById('status-text').textContent = 'Connected — ready';
+  };
+  ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+  ws.onclose = () => {
+    wsConnected = false;
+    document.getElementById('connection-dot').style.background = '#f44';
+    document.getElementById('status-text').textContent = 'Disconnected';
+  };
+  ws.onerror = () => {};
+}
+connect();
+
+// Auto-switch to demo mode if no connection in 3s
+setTimeout(() => {
+  if (!wsConnected && DEMO_DATA.length > 0) {
+    document.getElementById('status-text').textContent = 'Demo mode (no server)';
+    document.getElementById('connection-dot').style.background = GOLD;
+    enterDemoMode();
+  }
+}, 3000);
+
+// ─── Start Button ───────────────────────────────────────────────────────────
+document.getElementById('start-btn').addEventListener('click', () => {
+  const task = document.getElementById('task-input').value.trim();
+  if (!task) return;
+  if (wsConnected && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'start', task }));
+    document.getElementById('start-btn').disabled = true;
+    document.getElementById('start-btn').textContent = 'EVOLVING...';
+    state.running = true;
+    state.fitnessHistory = [];
+    state.teams = [];
+    state.sonarPings = [];
+    state.particles = [];
+    state.bestTeamId = null;
+    document.getElementById('action-feed').innerHTML = '';
+    document.getElementById('scores-panel').innerHTML = '';
+    document.getElementById('synthesis-overlay').style.display = 'none';
+    document.getElementById('start-bar').style.display = 'flex';
+  }
+});
+
+// ─── Demo Mode ──────────────────────────────────────────────────────────────
+function enterDemoMode() {
+  document.getElementById('demo-indicator').style.display = 'block';
+  runDemoMode();
+}
+
+function runDemoMode() {
+  state.running = true;
+  state.fitnessHistory = [];
+  state.teams = [];
+  state.bestTeamId = null;
+  document.getElementById('start-btn').disabled = true;
+  document.getElementById('start-btn').textContent = 'DEMO MODE';
+  document.getElementById('action-feed').innerHTML = '';
+  document.getElementById('scores-panel').innerHTML = '';
+  DEMO_DATA.forEach((msg) => {
+    setTimeout(() => handleMessage(msg), (msg._delay * 1000) || 0);
+  });
+}
+
+// D key = instant demo switch
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'd' || e.key === 'D') && !e.ctrlKey && !e.metaKey &&
+      document.activeElement !== document.getElementById('task-input')) {
+    if (ws) ws.close();
+    document.getElementById('connection-dot').style.background = GOLD;
+    document.getElementById('status-text').textContent = 'Demo mode (hotkey)';
+    if (DEMO_DATA.length > 0) enterDemoMode();
+  }
+  // R = reset
+  if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey &&
+      document.activeElement !== document.getElementById('task-input')) {
+    state.teams = [];
+    state.sonarPings = [];
+    state.particles = [];
+    state.fitnessHistory = [];
+    state.bestTeamId = null;
+    state.generation = 0;
+    document.getElementById('gen-count').textContent = '0';
+    document.getElementById('action-feed').innerHTML = '';
+    document.getElementById('scores-panel').innerHTML = '';
+    document.getElementById('synthesis-overlay').style.display = 'none';
+    document.getElementById('start-bar').style.display = 'flex';
+    document.getElementById('start-btn').disabled = false;
+    document.getElementById('start-btn').textContent = 'EVOLVE';
+    drawFitnessGraph();
+  }
+});
+
+// Load demo data if available
+fetch('demo_data.json')
+  .then(r => r.ok ? r.json() : [])
+  .then(data => { DEMO_DATA = data; })
+  .catch(() => {});
+</script>
+</body>
+</html>
