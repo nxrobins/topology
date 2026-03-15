@@ -8,7 +8,6 @@ client = AsyncOpenAI(
 )
 
 RECORD_MODE = True
-recorded_messages = []
 
 # ─── Organizational Genome ───────────────────────────────────────────────────
 
@@ -432,26 +431,31 @@ Output format:
                         "survived": [t.id for t in survivors],
                         "dissolved": [t.id for t in dead]})
 
-        # Phase 3.5: Progressive insight from 70B
-        insight = await self.generation_insight(self.generation + 1, survivors, dead, avg_fitness)
-        await broadcast({"type": "generation_insight", "gen": self.generation + 1, "text": insight})
+        # Phase 3.5 + Phase 4: Insight and Mutation in PARALLEL
+        async def do_insight():
+            insight = await self.generation_insight(self.generation + 1, survivors, dead, avg_fitness)
+            await broadcast({"type": "generation_insight", "gen": self.generation + 1, "text": insight})
 
-        # Phase 4: Mutate + Repopulate
-        new_teams = []
-        for survivor in survivors:
-            for _ in range(2):
-                child = Team(genome=survivor.genome.mutate(), parent_id=survivor.id)
-                new_teams.append(child)
-                await broadcast({"type": "mutation", "parent_id": survivor.id,
-                                "child_id": child.id,
-                                "mutation_desc": child.genome.describe()})
+        async def do_mutations():
+            new_teams = []
+            for survivor in survivors:
+                for _ in range(2):
+                    child = Team(genome=survivor.genome.mutate(), parent_id=survivor.id)
+                    new_teams.append(child)
+                    await broadcast({"type": "mutation", "parent_id": survivor.id,
+                                    "child_id": child.id,
+                                    "mutation_desc": child.genome.describe()})
+            if self.generation % 2 == 0:
+                immigrant = Team(genome=OrganizationalGenome.random(self.role_pool))
+                new_teams.append(immigrant)
+                await broadcast({"type": "mutation", "parent_id": None,
+                                "child_id": immigrant.id,
+                                "mutation_desc": "IMMIGRANT: " + immigrant.genome.describe()})
+            return new_teams
 
-        if self.generation % 2 == 0:
-            immigrant = Team(genome=OrganizationalGenome.random(self.role_pool))
-            new_teams.append(immigrant)
-            await broadcast({"type": "mutation", "parent_id": None,
-                            "child_id": immigrant.id,
-                            "mutation_desc": "IMMIGRANT: " + immigrant.genome.describe()})
+        insight_task = asyncio.create_task(do_insight())
+        new_teams = await do_mutations()
+        await insight_task  # Ensure insight completes before next generation
 
         self.population = survivors + new_teams[:10 - len(survivors)]
         self.generation += 1
@@ -643,8 +647,6 @@ Output format:
 class EvolveServer:
     def __init__(self):
         self.clients = set()
-        self.engine = EvolutionEngine()
-        self.run_start_time = 0
 
     async def register(self, websocket):
         self.clients.add(websocket)
@@ -653,48 +655,50 @@ class EvolveServer:
         finally:
             self.clients.discard(websocket)
 
-    async def broadcast(self, message):
-        if RECORD_MODE:
-            message['_delay'] = round(time.time() - self.run_start_time, 3)
-            recorded_messages.append(message)
-        if self.clients:
-            payload = json.dumps(message)
-            await asyncio.gather(
-                *[c.send(payload) for c in self.clients],
-                return_exceptions=True
-            )
-
     async def listen(self, websocket):
         async for message in websocket:
             data = json.loads(message)
             if data["type"] == "start":
-                asyncio.create_task(self.run_evolution(data["task"]))
+                asyncio.create_task(self.run_evolution(websocket, data["task"]))
 
-    async def run_evolution(self, task):
-        global recorded_messages
-        recorded_messages = []
-        self.run_start_time = time.time()
+    async def run_evolution(self, websocket, task):
+        # Isolated engine and recording state per connection
+        engine = EvolutionEngine()
+        run_start_time = time.time()
+        local_records = []
 
-        await self.engine.initialize(task)
+        # Broadcast scoped to this single websocket
+        async def client_broadcast(message):
+            if RECORD_MODE:
+                message['_delay'] = round(time.time() - run_start_time, 3)
+                local_records.append(message)
+            try:
+                await websocket.send(json.dumps(message))
+            except Exception:
+                pass  # Client disconnected mid-run
+
+        await engine.initialize(task)
         for gen in range(1, 6):
-            await self.broadcast({
+            await client_broadcast({
                 "type": "generation_start",
                 "gen": gen,
-                "teams": self.engine.get_serialized_population()
+                "teams": engine.get_serialized_population()
             })
-            await self.engine.run_generation(broadcast=self.broadcast)
+            await engine.run_generation(broadcast=client_broadcast)
 
         # Final synthesis
-        synthesis = await self.engine.synthesize()
-        await self.broadcast({"type": "synthesis", "text": synthesis})
-        await self.broadcast({"type": "complete",
-                             "winner": self.engine.get_best_team()})
+        synthesis = await engine.synthesize()
+        await client_broadcast({"type": "synthesis", "text": synthesis})
+        await client_broadcast({"type": "complete", "winner": engine.get_best_team()})
 
-        # Save recorded demo data
+        # Save demo data: unique file for archival + fixed file for frontend fallback
         if RECORD_MODE:
+            unique_name = f"demo_data_{uuid.uuid4().hex[:8]}.json"
+            with open(unique_name, "w") as f:
+                json.dump(local_records, f)
             with open("demo_data.json", "w") as f:
-                json.dump(recorded_messages, f)
-            print(f"[RECORD] Saved {len(recorded_messages)} messages to demo_data.json")
+                json.dump(local_records, f)
+            print(f"[RECORD] Saved {len(local_records)} messages to {unique_name} + demo_data.json")
 
 async def main():
     server = EvolveServer()
