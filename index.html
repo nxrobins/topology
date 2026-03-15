@@ -58,7 +58,9 @@
   #feed-toggle.collapsed { transform:rotate(-90deg); }
   #action-feed { max-height:115px; overflow-y:auto; padding:0 16px 8px;
     font-family:'JetBrains Mono',monospace; font-size:12px; line-height:1.5; scrollbar-width:thin;
-    scrollbar-color:#333 transparent; }
+    scrollbar-color:#333 transparent;
+    mask-image: linear-gradient(to bottom, transparent 0%, black 15%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15%); }
   #action-feed::-webkit-scrollbar { width:3px; }
   #action-feed::-webkit-scrollbar-thumb { background:#333; }
   #action-feed div { padding:1px 0; white-space:normal; word-wrap:break-word; }
@@ -176,7 +178,7 @@
 </div>
 
 <div id="start-bar">
-  <input id="task-input" placeholder="Enter a task for agents to compete on..." value="Build an AI tutoring app for high schoolers">
+  <input id="task-input" placeholder="Enter a task for agents to compete on..." value="Design an AI inference platform that serves 10,000 concurrent users with minimal latency and cost.">
   <button id="start-btn">EVOLVE</button>
 </div>
 
@@ -348,7 +350,11 @@ function drawAgent(agentData, agentIdx, team, pos) {
 
   ctx.beginPath();
   ctx.arc(ax, ay, size, 0, Math.PI * 2);
-  ctx.fillStyle = color;
+  const gradient = ctx.createRadialGradient(ax, ay, 0, ax, ay, size);
+  gradient.addColorStop(0, team.alive ? '#FFFFFF' : '#666666');
+  gradient.addColorStop(0.4, color);
+  gradient.addColorStop(1, color);
+  ctx.fillStyle = gradient;
   ctx.globalAlpha = team.alive ? 0.9 : 0.15;
   ctx.fill();
   ctx.globalAlpha = 1;
@@ -458,6 +464,13 @@ function drawFitnessGraph() {
   });
   fgCtx.stroke();
 
+  // Fill under the average line
+  fgCtx.lineTo(w, h);
+  fgCtx.lineTo(0, h);
+  fgCtx.closePath();
+  fgCtx.fillStyle = 'rgba(0, 255, 204, 0.1)';
+  fgCtx.fill();
+
   // Best line (gold — the apex genome)
   fgCtx.beginPath();
   fgCtx.strokeStyle = GOLD;
@@ -506,8 +519,23 @@ function updateScoresPanel() {
 }
 
 // ─── Render Loop ───────────────────────────────────────────────────────────
+function drawGrid() {
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+  ctx.lineWidth = 1;
+  const gridSize = 40;
+  ctx.beginPath();
+  for (let x = 0; x <= canvas.width; x += gridSize) {
+    ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height);
+  }
+  for (let y = 0; y <= canvas.height; y += gridSize) {
+    ctx.moveTo(0, y); ctx.lineTo(canvas.width, y);
+  }
+  ctx.stroke();
+}
+
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawGrid();
 
   // Lerp team positions (including mutation bloom)
   state.teams.forEach(t => {

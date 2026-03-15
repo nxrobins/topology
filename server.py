@@ -317,16 +317,21 @@ class EvolutionEngine:
                 max_tokens=200,
                 temperature=0.9,
             )
-            roles = [
-                r.strip().strip('-•*').strip()
-                for r in response.choices[0].message.content.strip().split('\n')
-                if r.strip()
-            ]
-            roles = [r for r in roles if 3 < len(r) < 30]
+            roles = []
+            for r in response.choices[0].message.content.strip().split('\n'):
+                r = r.strip()
+                if not r:
+                    continue
+                # Strip numbering: "1. ", "1) ", "14. ", etc.
+                r = re.sub(r'^\d+[\.\)]\s*', '', r)
+                # Strip bullets
+                r = r.strip('-•*').strip()
+                if 3 < len(r) < 30:
+                    roles.append(r)
             if len(roles) >= 10:
                 return roles
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[ROLES] Generation failed: {e}")
         return ROLE_POOL  # Fallback to static pool
 
     async def initialize(self, task):
@@ -394,9 +399,9 @@ Output format:
 
         # Phase 2: Evaluate
         for team in self.population:
-            team.fitness, reasoning = await self.evaluate(team)
+            team.fitness, team.reasoning = await self.evaluate(team)
             await broadcast({"type": "team_scored", "team_id": team.id,
-                            "fitness": team.fitness, "reasoning": reasoning})
+                            "fitness": team.fitness, "reasoning": team.reasoning})
 
         # Record all team genomes + scores for synthesis
         for team in self.population:
@@ -404,6 +409,7 @@ Output format:
                 "gen": self.generation + 1,
                 "id": team.id,
                 "fitness": team.fitness,
+                "reasoning": getattr(team, 'reasoning', ''),
                 "hierarchy": team.genome.hierarchy,
                 "communication": team.genome.communication,
                 "decision_making": team.genome.decision_making,
@@ -481,6 +487,65 @@ Output format:
         self.generation_insights.append(insight)
         return insight
 
+    def build_synthesis_brief(self):
+        """Pre-digest the full evolutionary history into a structured synthesis brief."""
+        # 1. Generation insights (already collected)
+        insights = "\n".join(
+            f"Gen {i+1}: {ins}"
+            for i, ins in enumerate(self.generation_insights)
+        )
+
+        # 2. Top 3 and bottom 3 teams across ALL generations (with evaluator reasoning)
+        sorted_records = sorted(self.all_team_records,
+                               key=lambda r: r['fitness'], reverse=True)
+        top_3 = sorted_records[:3]
+        bottom_3 = sorted_records[-3:]
+
+        top_analysis = "\n".join(
+            f"  - fitness {r['fitness']}: {r['hierarchy']}/{r['communication']}/{r['decision_making']} "
+            f"roles=[{', '.join(r['roles'][:4])}] — {r.get('reasoning', 'N/A')}"
+            for r in top_3
+        )
+        bottom_analysis = "\n".join(
+            f"  - fitness {r['fitness']}: {r['hierarchy']}/{r['communication']}/{r['decision_making']} "
+            f"roles=[{', '.join(r['roles'][:4])}] — {r.get('reasoning', 'N/A')}"
+            for r in bottom_3
+        )
+
+        # 3. Role survival analysis
+        final_roles = set()
+        for t in self.population:
+            final_roles.update(t.genome.roles)
+        gen1_roles = set()
+        for r in self.all_team_records:
+            if r['gen'] == 1:
+                gen1_roles.update(r['roles'])
+        extinct_roles = gen1_roles - final_roles
+
+        # 4. Gene convergence in final population
+        final_genes = {
+            'hierarchy': [t.genome.hierarchy for t in self.population],
+            'communication': [t.genome.communication for t in self.population],
+            'decision_making': [t.genome.decision_making for t in self.population],
+            'work_distribution': [t.genome.work_distribution for t in self.population],
+        }
+        convergence = []
+        for gene, values in final_genes.items():
+            dominant = max(set(values), key=values.count)
+            pct = values.count(dominant) / len(values)
+            if pct >= 0.6:
+                convergence.append(f"{gene}: {dominant} ({int(pct * 100)}% of final population)")
+
+        return {
+            'insights': insights,
+            'top_analysis': top_analysis,
+            'bottom_analysis': bottom_analysis,
+            'extinct_roles': extinct_roles,
+            'surviving_roles': final_roles,
+            'convergence': convergence,
+            'winner': self.get_best_team(),  # Already a serialized dict. Do NOT wrap.
+        }
+
     @staticmethod
     def _strip_think(text):
         """Remove DeepSeek-R1 <think>...</think> reasoning blocks."""
@@ -495,34 +560,44 @@ Output format:
         return cleaned
 
     async def synthesize(self):
-        """DeepSeek-R1 synthesizes pre-digested generation insights."""
-        best = self.get_best_team()
-        insights_text = "\n".join(f"Gen {i+1}: {ins}" for i, ins in enumerate(self.generation_insights))
+        """DeepSeek-R1 synthesizes a pre-digested evolutionary brief."""
+        brief = self.build_synthesis_brief()
 
-        prompt = (f"You are an expert in organizational theory and multi-agent systems.\n\n"
-                  f"An evolutionary discovery engine ran {len(self.generation_insights)} generations "
-                  f"to find the optimal agent team structure for a task.\n\n"
-                  f"Task: {self.task}\n\n"
-                  f"Generation-by-generation observations (produced by an analyst watching each round):\n"
-                  f"{insights_text}\n\n"
-                  f"Final winning genome: {json.dumps(best['genome'])}\n"
-                  f"Final best fitness: {best['fitness']}\n\n"
-                  f"Respond in EXACTLY three sections. No preamble. No hedging. State conclusions.\n\n"
-                  f"1. THE WINNING ARCHETYPE\n"
-                  f"Name it (e.g., \"The Focused Hierarchy\"). State the gene combination that won "
-                  f"and WHY it worked mechanically for this specific task.\n\n"
-                  f"2. KEY DISCOVERY\n"
-                  f"What organizational principle did evolution find that a human designer would "
-                  f"likely NOT have chosen upfront? Reference what got eliminated and why.\n\n"
-                  f"3. PRACTICAL INSIGHT\n"
-                  f"If a human team were tackling this same task, how should they organize? "
-                  f"Be concrete and specific.")
+        prompt = (
+            f"You are an expert in organizational theory and multi-agent systems.\n\n"
+            f"An evolutionary discovery engine ran {len(self.generation_insights)} generations "
+            f"to find the optimal agent team structure for a task.\n\n"
+            f"TASK: {self.task}\n\n"
+            f"GENERATION-BY-GENERATION OBSERVATIONS:\n"
+            f"{brief['insights']}\n\n"
+            f"HIGHEST-SCORING TEAMS (with evaluator reasoning):\n"
+            f"{brief['top_analysis']}\n\n"
+            f"LOWEST-SCORING TEAMS (with evaluator reasoning):\n"
+            f"{brief['bottom_analysis']}\n\n"
+            f"GENE CONVERGENCE (traits dominating the final population):\n"
+            f"{chr(10).join(brief['convergence']) or 'No strong convergence detected.'}\n\n"
+            f"ROLE EVOLUTION:\n"
+            f"Surviving roles: {', '.join(brief['surviving_roles'])}\n"
+            f"Extinct roles: {', '.join(brief['extinct_roles']) or 'None — all initial roles survived'}\n\n"
+            f"WINNING GENOME: {json.dumps(brief['winner']['genome'])}\n"
+            f"WINNING FITNESS: {brief['winner']['fitness']}\n\n"
+            f"Respond in EXACTLY three sections. No preamble. No hedging. State conclusions.\n\n"
+            f"1. THE WINNING ARCHETYPE\n"
+            f"Name it. State the gene combination AND the role composition that won. "
+            f"Explain WHY this combination worked mechanically for this specific task.\n\n"
+            f"2. KEY DISCOVERY\n"
+            f"What did evolution find that a human designer would NOT have chosen? "
+            f"Use the evaluator reasoning and extinct roles as evidence.\n\n"
+            f"3. PRACTICAL INSIGHT\n"
+            f"If a human team tackled this task, how should they organize? "
+            f"Be specific about team size, hierarchy, communication pattern, and which roles to staff."
+        )
 
         try:
             response = await client.chat.completions.create(
                 model="deepseek-ai/DeepSeek-R1-0528",
                 messages=[
-                    {"role": "system", "content": "You are a decisive organizational theorist. No deliberation. State conclusions directly. Under 250 words total."},
+                    {"role": "system", "content": "You are a decisive organizational theorist. No deliberation. State conclusions directly. Under 300 words total."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=4096,
@@ -539,7 +614,7 @@ Output format:
                 response = await client.chat.completions.create(
                     model="meta-llama/Llama-3.3-70B-Instruct-fast",
                     messages=[
-                        {"role": "system", "content": "You are a decisive organizational theorist. Follow the EXACT section headers given. No deliberation. Under 250 words."},
+                        {"role": "system", "content": "You are a decisive organizational theorist. Follow the EXACT section headers given. No deliberation. Under 300 words."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=800,

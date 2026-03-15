@@ -10,3 +10,8 @@ export NEBIUS_API_KEY=your_key_here
 python server.py
 # Open index.html in a browser
 ```
+
+## Future Work
+- **Genome as deployable artifact:** Export winning structures as CrewAI/LangGraph configs
+- **Cross-task transfer learning:** Train a classifier on evolutionary results to predict optimal structure from task description alone
+- **Co-evolutionary fitness:** Evolve the evaluation rubric alongside the teams to escape evaluator bias
