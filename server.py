@@ -26,13 +26,14 @@ ROLE_POOL = [
 class OrganizationalGenome:
     def __init__(self, team_size=5, roles=None, hierarchy="flat",
                  communication="broadcast", decision_making="consensus",
-                 work_distribution="equal"):
+                 work_distribution="equal", role_pool=None):
         self.team_size = team_size
         self.hierarchy = hierarchy
         self.communication = communication
         self.decision_making = decision_making
         self.work_distribution = work_distribution
-        self.roles = roles or random.sample(ROLE_POOL, min(team_size, len(ROLE_POOL)))
+        self.role_pool = role_pool or ROLE_POOL
+        self.roles = roles or random.sample(self.role_pool, min(team_size, len(self.role_pool)))
 
     def mutate(self):
         new = copy.deepcopy(self)
@@ -44,11 +45,11 @@ class OrganizationalGenome:
             if trait == 'team_size':
                 new.team_size = random.randint(3, 7)
                 while len(new.roles) < new.team_size:
-                    new.roles.append(random.choice(ROLE_POOL))
+                    new.roles.append(random.choice(new.role_pool))
                 new.roles = new.roles[:new.team_size]
             elif trait == 'roles':
                 idx = random.randint(0, len(new.roles) - 1)
-                new.roles[idx] = random.choice(ROLE_POOL)
+                new.roles[idx] = random.choice(new.role_pool)
             elif trait == 'hierarchy':
                 new.hierarchy = random.choice(HIERARCHIES)
             elif trait == 'communication':
@@ -60,7 +61,7 @@ class OrganizationalGenome:
         return new
 
     @classmethod
-    def random(cls):
+    def random(cls, role_pool=None):
         size = random.randint(3, 7)
         return cls(
             team_size=size,
@@ -68,6 +69,7 @@ class OrganizationalGenome:
             communication=random.choice(COMMUNICATIONS),
             decision_making=random.choice(DECISIONS),
             work_distribution=random.choice(DISTRIBUTIONS),
+            role_pool=role_pool,
         )
 
     def describe(self):
@@ -303,6 +305,30 @@ class EvolutionEngine:
         self.all_team_records = []  # Track every team genome + score for synthesis
         self.generation_insights = []
 
+    async def generate_role_pool(self, task):
+        """One 8B call generates 20 task-specific roles. Replaces static ROLE_POOL."""
+        try:
+            response = await client.chat.completions.create(
+                model="meta-llama/Meta-Llama-3.1-8B-Instruct-fast",
+                messages=[
+                    {"role": "system", "content": "List exactly 20 creative agent roles for the task below. One per line. 2-3 words each. No numbering, no explanation."},
+                    {"role": "user", "content": task}
+                ],
+                max_tokens=200,
+                temperature=0.9,
+            )
+            roles = [
+                r.strip().strip('-•*').strip()
+                for r in response.choices[0].message.content.strip().split('\n')
+                if r.strip()
+            ]
+            roles = [r for r in roles if 3 < len(r) < 30]
+            if len(roles) >= 10:
+                return roles
+        except Exception:
+            pass
+        return ROLE_POOL  # Fallback to static pool
+
     async def initialize(self, task):
         self.task = task
         self.generation = 0
@@ -310,7 +336,9 @@ class EvolutionEngine:
         self.all_team_records = []
         self.generation_insights = []
         Team._next_id = 0
-        self.population = [Team(genome=OrganizationalGenome.random()) for _ in range(10)]
+        self.role_pool = await self.generate_role_pool(task)
+        print(f"[ROLES] Generated {len(self.role_pool)} task-specific roles: {self.role_pool}")
+        self.population = [Team(genome=OrganizationalGenome.random(self.role_pool)) for _ in range(10)]
 
     async def evaluate(self, team):
         system_prompt = """You are a ruthless organizational critic. Return ONLY valid JSON.
@@ -410,7 +438,7 @@ Output format:
                                 "mutation_desc": child.genome.describe()})
 
         if self.generation % 2 == 0:
-            immigrant = Team(genome=OrganizationalGenome.random())
+            immigrant = Team(genome=OrganizationalGenome.random(self.role_pool))
             new_teams.append(immigrant)
             await broadcast({"type": "mutation", "parent_id": None,
                             "child_id": immigrant.id,
